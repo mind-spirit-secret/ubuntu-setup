@@ -52,11 +52,11 @@ load_modules() {
   done
 }
 
-run_modules() {
-  module_git
-  module_micro
-  module_docker_compose
-}
+# run_modules() {
+#   module_git
+#   module_micro
+#   module_docker_compose
+# }
 
 main() {
   load_modules
