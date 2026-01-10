@@ -1,0 +1,167 @@
+pipeline {
+	agent any
+
+	environment {
+		SERVER_IP = '135.235.152.199'
+		SSH_USERNAME = 'minpirit'
+		DOCKER_TAG = "${BUILD_NUMBER}"
+		APP_DIR = 'ubuntu-setup'
+		APP_NAME = 'setup'
+		PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH'
+		REMOTE_DIR = "/home/${SSH_USERNAME}/${APP_DIR}/${APP_NAME}"
+		DEPLOY_DIR = "/home/${SSH_USERNAME}/${APP_DIR}/${APP_NAME}/module"
+		LOG_FILE = "${REMOTE_DIR}/set-up.log"
+		DEPLOY_TIMEOUT = '30000'
+	}
+
+	stages {
+		stage('Deploy to Production') {
+			steps {
+				timeout(time: env.DEPLOY_TIMEOUT.toInteger(), unit: 'SECONDS') {
+					script {
+						try {
+							echo 'Cleaning up previous deployment artifacts...'
+							sh 'rm -f deploy.tar.gz || true'
+
+							echo 'Copying deployment files to server...'
+							sh '''
+								rm -f deploy.tar.gz || true
+
+								echo "Creating file list..."
+								find . -type f \
+									! -path "./node_modules/*" \
+									! -path "./.git/*" \
+									! -path "./deploy.tar.gz" \
+									! -name "*.log" \
+									! -name "*.tmp" \
+									! -path "./.next/cache/*" \
+									> files_to_include.txt
+
+								echo "Creating deployment package from workspace..."
+								tar czf deploy.tar.gz --no-recursion --files-from files_to_include.txt || {
+									echo "Failed to create tar archive"
+									rm -f files_to_include.txt
+									exit 1
+								}
+
+								rm -f files_to_include.txt
+
+								if [ ! -f deploy.tar.gz ]; then
+									echo "Failed to create deployment package!"
+									exit 1
+								fi
+								echo "Deployment package created successfully"
+
+								echo "Testing archive integrity..."
+								tar tzf deploy.tar.gz > /dev/null 2>&1 || {
+									echo "Archive integrity test failed!"
+									exit 1
+								}
+
+								echo "Archive created and verified successfully"
+
+								echo "Generating checksum for deployment package..."
+								CHECKSUM=$(sha256sum deploy.tar.gz | awk '{print $1}')
+								echo "$CHECKSUM" | tee deploy.tar.gz.sha256
+								echo "Generated checksum: $CHECKSUM"
+							'''
+
+							sh """
+								echo 'Starting deployment to remote server...'
+
+								ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${SSH_USERNAME}@${SERVER_IP} "sudo rm -rf ${REMOTE_DIR}/* > /dev/null 2>&1"
+								ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${SSH_USERNAME}@${SERVER_IP} "sudo mkdir -p ${REMOTE_DIR} > /dev/null 2>&1 && sudo chown ${SSH_USERNAME}:${SSH_USERNAME} ${REMOTE_DIR}"
+
+								echo 'Copying deployment files...'
+								scp -q -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa deploy.tar.gz deploy.tar.gz.sha256 ${SSH_USERNAME}@${SERVER_IP}:${REMOTE_DIR}
+
+								ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa ${SSH_USERNAME}@${SERVER_IP} <<'ENDSSH'
+									set -e
+									cd ${REMOTE_DIR}
+
+									tar xzf deploy.tar.gz > /dev/null 2>&1
+									rm -f deploy.tar.gz deploy.tar.gz.sha256 files_to_include.txt > /dev/null 2>&1
+
+									echo 'Setting up environment variables...'
+
+									echo '✓ Cleanup successful'
+
+									cd ${DEPLOY_DIR}
+									echo ' the present working directory and the files in it'
+									pwd && ls -la
+
+									echo 'Checking if setup.sh exists'
+									if [ ! -f 'setup.sh' ]; then
+										echo 'Error: NO setup.sh not found!'
+										exit 1
+									fi
+									echo "creating Logging setup.sh at ${LOG_FILE}"
+									mkdir -p "$(dirname "${LOG_FILE}")"
+									touch "${LOG_FILE}"
+
+									echo 'Executing setup.sh...'
+									chmod +x setup.sh
+									echo "✓ setup.sh is executable; starting execution and logging to ${LOG_FILE}"
+									( set -o pipefail; ./setup.sh |& tee -a "${LOG_FILE}" )
+ENDSSH
+							"""
+						} catch (Exception e) {
+							echo "Deployment failed: ${e.getMessage()}"
+							currentBuild.result = 'FAILURE'
+							throw e
+						}
+					}
+				}
+			}
+		}
+	}
+
+	post {
+		always {
+			script {
+				def status = currentBuild.result ?: 'SUCCESS'
+				def color = status == 'SUCCESS' ? 'green' : 'red'
+
+				echo "Pipeline finished with status: ${status}"
+				FROM_EMAIL = 'mithilastackclient@gmail.com'
+
+				emailext(
+					subject: "[$status] Pipeline: ${currentBuild.fullDisplayName}",
+					body: """
+						<html>
+						<body style="font-family: Arial, sans-serif;">
+							<div style="background-color: ${color}; color: white; padding: 10px; text-align: center;">
+								<h2>Build ${BUILD_NUMBER} - ${status}</h2>
+							</div>
+							<div style="padding: 20px;">
+								<p><strong>Build URL:</strong> <a href="${BUILD_URL}">${BUILD_URL}</a></p>
+								<p><strong> Use the given credentials to access jenkins server: User id: team_mithilastack and Password: team_Mithilastack@12112024</strong></p>
+								<p><strong>Changes:</strong></p>
+								<pre>${currentBuild.changeSets}</pre>
+								<p><strong>Console Output:</strong> Check build page for details</p>
+							</div>
+							<div style="background-color: #f0f0f0; padding: 10px; text-align: center;">
+								<p>Mithilastack DevOps Team</p>
+							</div>
+						</body>
+						</html>
+					""",
+					to: 'itsonlykartik@gmail.com',
+					from: 'mithilastackclient@gmail.com',
+					replyTo: 'mithilastackclient@gmail.com',
+					mimeType: 'text/html'
+				)
+
+				echo 'Notification email sent'
+			}
+		}
+
+		success {
+			echo 'Pipeline completed successfully! All stages passed.'
+		}
+
+		failure {
+			echo 'Pipeline failed! Please check the logs for details.'
+		}
+	}
+}
