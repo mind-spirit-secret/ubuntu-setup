@@ -96,7 +96,8 @@ pipeline {
 										exit 1
 									fi
 									echo "creating Logging setup.sh at ${LOG_FILE}"
-									mkdir -p "$(dirname "${LOG_FILE}")"
+									LOG_DIR=${'$'}(dirname "${LOG_FILE}")
+									mkdir -p "${'$'}LOG_DIR"
 									touch "${LOG_FILE}"
 
 									echo 'Executing setup.sh...'
