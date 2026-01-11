@@ -9,7 +9,6 @@ pipeline {
 		APP_NAME = 'setup'
 		PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH'
 		REMOTE_DIR = "/home/${SSH_USERNAME}/${APP_DIR}/${APP_NAME}"
-		DEPLOY_DIR = "/home/${SSH_USERNAME}/${APP_DIR}/${APP_NAME}/module"
 		LOG_FILE = "${REMOTE_DIR}/set-up.log"
 		DEPLOY_TIMEOUT = '30000'
 	}
@@ -86,7 +85,7 @@ pipeline {
 
 									echo '✓ Cleanup successful'
 
-									cd ${DEPLOY_DIR}
+									cd ${REMOTE_DIR}
 									echo ' the present working directory and the files in it'
 									pwd && ls -la
 
